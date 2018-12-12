@@ -2,39 +2,39 @@ import re
 ID, LITERAL, DIGIT, LETTER, PLUS, MINUS, MULT, SEMICOLON, LPAREN, RPAREN, EQUAL, EOF = \
     'ID', 'LITERAL', 'DIGIT', 'LETTER','PLUS', 'MINUS', 'MULT', 'SEMICOLON', 'LPAREN', 'RPAREN', 'EQUAL', 'EOF'
 
-class AST(object):
+class SyntaxTree(object):
     pass
 
-class NoOp(AST):
+class Epsilon(SyntaxTree):
     pass
 
-class BinOp(AST):
+class BinaryOperation(SyntaxTree):
     def __init__(self, left, op, right):
         self.left = left
         self.token = self.op = op
         self.right = right
 
-class UnaryOp(AST):
+class UnaryOperation(SyntaxTree):
     def __init__(self, op, expr):
         self.token = self.op = op
         self.expr = expr
 
-class Assign(AST):
+class Assign(SyntaxTree):
     def __init__(self, left, op, right):
         self.left = left
         self.token = self.op = op
         self.right = right
 
-class Identifier(AST):
+class Identifier(SyntaxTree):
     def __init__(self, token):
         self.token = token
         self.value = token.value
 
-class Compound(AST):
+class AssignmentList(SyntaxTree):
     def __init__(self):
         self.children = []
 
-class Num(AST):
+class Literal(SyntaxTree):
     def __init__(self, token):
         self.token = token
         self.value = token.value
@@ -158,14 +158,14 @@ class Parser(object):
         ## Digit --> 0 | 1 | ... | 9
         token = self.current_token
         self.eat(DIGIT)
-        return Num(token)
+        return Literal(token)
 
     def nonzerodigit(self):
         ## NonZeroDigit --> 1 | ... | 9
         token = self.current_token
         if token.value != '0':
             self.eat(DIGIT)
-            return Num(token)
+            return Literal(token)
 
     def letter(self):
         ## Letter --> a | ... | z | A | ... | Z | _
@@ -210,11 +210,11 @@ class Parser(object):
             return node
         elif token.type == MINUS:
             self.eat(MINUS)
-            node = UnaryOp(token, self.fact())
+            node = UnaryOperation(token, self.fact())
             return node
         elif token.type == PLUS:
             self.eat(PLUS)
-            node = UnaryOp(token, self.fact())
+            node = UnaryOperation(token, self.fact())
             return node
         elif token.type == DIGIT:
             return self.literal()
@@ -224,7 +224,7 @@ class Parser(object):
 
     def program(self):
         ## Program --> Assignment*
-        root = Compound()
+        root = AssignmentList()
         token = self.current_token
         while token.type is not EOF:
             root.children.append(self.assignment())
@@ -235,10 +235,10 @@ class Parser(object):
         ## Term --> Fact Term'
         result = self.fact()
         node = self.termprime()
-        if node is NoOp:
+        if node is Epsilon:
             return result
         else:
-            return BinOp(result, node.token, node)
+            return BinaryOperation(result, node.token, node)
 
     def termprime(self):
         ## Term' --> * Fact Term' | e
@@ -247,18 +247,18 @@ class Parser(object):
             self.eat(MULT)
             result = self.fact()
             node = self.termprime()
-            if node is NoOp:
-                return BinOp(result, token, Num(Token(LITERAL, 1)))
-        return NoOp
+            if node is Epsilon:
+                return BinaryOperation(result, token, Literal(Token(LITERAL, 1)))
+        return Epsilon
 
     def exp(self):
         ## Exp --> Term Exp'
         result = self.term()
         node = self.expprime()
-        if node is NoOp:
+        if node is Epsilon:
             return result
         else:
-            return BinOp(result, node.token, node)
+            return BinaryOperation(result, node.token, node)
 
     def expprime(self):
         ## Exp' --> + Term Exp' | - Term Exp' | e
@@ -267,16 +267,16 @@ class Parser(object):
             self.eat(PLUS)
             left = self.term()
             right = self.expprime()
-            if right is NoOp:
-                return BinOp(left, token, Num(Token(LITERAL, 0)))
+            if right is Epsilon:
+                return BinaryOperation(left, token, Literal(Token(LITERAL, 0)))
 
         elif token.type == MINUS:
             self.eat(MINUS)
             left = self.term()
             right = self.expprime()
-            if right is NoOp:
-                return BinOp(left, token, Num(Token(LITERAL, 0)))
-        return NoOp
+            if right is Epsilon:
+                return BinaryOperation(left, token, Literal(Token(LITERAL, 0)))
+        return Epsilon
 
     def literal(self):
         ## Literal -->  0 | NonZeroDigit Digit*
@@ -284,7 +284,7 @@ class Parser(object):
 
         if token.type == DIGIT and token.value == '0':
             self.eat(DIGIT)
-            return Num(Token(LITERAL, 0))
+            return Literal(Token(LITERAL, 0))
         elif token.type ==DIGIT and token.value is not '0':
             result = token.value
             self.eat(DIGIT)
@@ -294,7 +294,7 @@ class Parser(object):
                 self.eat(DIGIT)
                 token = self.current_token
 
-            return Num(Token(LITERAL, int(result)))
+            return Literal(Token(LITERAL, int(result)))
 
 class NodeVisitor(object):
     def visit(self, node):
@@ -307,11 +307,11 @@ class NodeVisitor(object):
         raise Exception('No visit_{} method'.format(type(node).__name__) + ' ' + node.type)
 
 class Interpreter(NodeVisitor):
-    GLOBAL_SCOPE = {}
+    VARIABLE_DICT = {}
     def __init__(self, parser):
         self.parser = parser
 
-    def visit_BinOp(self, node):
+    def visit_BinaryOperation(self, node):
 
         if node.op.type == PLUS:
             return self.visit(node.left) + self.visit(node.right)
@@ -320,30 +320,30 @@ class Interpreter(NodeVisitor):
         elif node.op.type == MULT:
             return self.visit(node.left) * self.visit(node.right)
 
-    def visit_Num(self, node):
+    def visit_Literal(self, node):
         return node.value
 
-    def visit_UnaryOp(self, node):
+    def visit_UnaryOperation(self, node):
         op = node.op.type
         if op == PLUS:
             return +self.visit(node.expr)
         elif op == MINUS:
             return -self.visit(node.expr)
 
-    def visit_Compound(self, node):
+    def visit_AssignmentList(self, node):
         for child in node.children:
             self.visit(child)
 
-    def visit_NoOp(self, node):
+    def visit_Epsilon(self, node):
         pass
 
     def visit_Assign(self, node):
         var_name = node.left.value
-        self.GLOBAL_SCOPE[var_name] = self.visit(node.right)
+        self.VARIABLE_DICT[var_name] = self.visit(node.right)
 
     def visit_Identifier(self, node):
         var_name = node.value
-        val = self.GLOBAL_SCOPE.get(var_name)
+        val = self.VARIABLE_DICT.get(var_name)
         if val is None:
             raise NameError(repr(var_name))
         else:
@@ -366,7 +366,7 @@ def main():
         parser = Parser(lexer)
         interpreter = Interpreter(parser)
         interpreter.interpret()
-        print(interpreter.GLOBAL_SCOPE)
+        print(interpreter.VARIABLE_DICT)
 
 if __name__ == '__main__':
     main()
